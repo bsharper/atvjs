@@ -2,7 +2,7 @@
   "name": "@bsharper/atv-js",
   "version": "0.2.3",
   "description": "Apple TV control library - mDNS discovery, AirPlay/Companion pairing, remote control, keyboard input",
-  "repository": "github:bsharper/atvjs"
+  "repository": "github:bsharper/atvjs",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
