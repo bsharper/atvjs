@@ -1,6 +1,6 @@
 {
-  "name": "@bharper/atv-js",
-  "version": "0.2.3",
+  "name": "@bharper/atv",
+  "version": "0.2.4",
   "description": "Apple TV control library - mDNS discovery, AirPlay/Companion pairing, remote control, keyboard input",
   "repository": {
     "type": "git",
@@ -15,6 +15,7 @@
     "remote": "ts-node examples/remote.ts"
   },
   "dependencies": {
+    "@bharper/atv-js": "^0.2.3",
     "@noble/ciphers": "^2.1.1",
     "bplist-creator": "^0.1.0",
     "bplist-parser": "^0.3.2",
@@ -29,5 +30,17 @@
   },
   "engines": {
     "node": ">=18.0.0"
-  }
+  },
+  "directories": {
+    "example": "examples",
+    "test": "test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/bsharper/atvjs/issues"
+  },
+  "homepage": "https://github.com/bsharper/atvjs#readme"
 }
