@@ -15,14 +15,20 @@ const AIRPLAY_HEADERS: Record<string, string> = {
   'Content-Type': 'application/octet-stream',
 };
 
-async function httpPost(host: string, port: number, path: string, body?: Buffer): Promise<Buffer> {
+async function httpPost(
+  host: string,
+  port: number,
+  path: string,
+  body?: Buffer,
+  agent?: http.Agent,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const headers: Record<string, string | number> = { ...AIRPLAY_HEADERS };
     if (body) {
       headers['Content-Length'] = body.length;
     }
 
-    const req = http.request({ hostname: host, port, path, method: 'POST', headers }, (res) => {
+    const req = http.request({ hostname: host, port, path, method: 'POST', headers, agent }, (res) => {
       const chunks: Buffer[] = [];
       res.on('data', (chunk: Buffer) => chunks.push(chunk));
       res.on('end', () => resolve(Buffer.concat(chunks)));
@@ -41,6 +47,63 @@ export interface AirPlayPairingSession {
   atvPubKey: Buffer;
 }
 
+const AIRPLAY_AGENT_IDLE_MS = 2 * 60 * 1000;
+
+type AgentEntry = {
+  agent: http.Agent;
+  lastUsed: number;
+  timer: NodeJS.Timeout;
+};
+
+const agentCache = new Map<string, AgentEntry>();
+
+function agentKey(host: string, port: number): string {
+  return `${host}:${port}`;
+}
+
+function touchAgent(entry: AgentEntry): void {
+  entry.lastUsed = Date.now();
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = setTimeout(() => {
+    if (Date.now() - entry.lastUsed >= AIRPLAY_AGENT_IDLE_MS) {
+      entry.agent.destroy();
+      // Find and remove by identity
+      for (const [key, value] of agentCache) {
+        if (value === entry) {
+          agentCache.delete(key);
+          break;
+        }
+      }
+    }
+  }, AIRPLAY_AGENT_IDLE_MS);
+  entry.timer.unref();
+}
+
+function getPairingAgent(host: string, port: number): http.Agent {
+  const key = agentKey(host, port);
+  const existing = agentCache.get(key);
+  if (existing) {
+    touchAgent(existing);
+    return existing.agent;
+  }
+
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 1, maxFreeSockets: 1 });
+  agent.on('free', (socket) => {
+    socket.unref();
+  });
+  const entry: AgentEntry = {
+    agent,
+    lastUsed: Date.now(),
+    timer: setTimeout(() => {
+      agent.destroy();
+      agentCache.delete(key);
+    }, AIRPLAY_AGENT_IDLE_MS),
+  };
+  entry.timer.unref();
+  agentCache.set(key, entry);
+  return agent;
+}
+
 /**
  * Start AirPlay pairing: triggers PIN display on the Apple TV.
  * Returns a session object to pass to finishAirPlayPairing.
@@ -48,9 +111,10 @@ export interface AirPlayPairingSession {
 export async function startAirPlayPairing(host: string, port: number): Promise<AirPlayPairingSession> {
   const srp = new SRPAuthHandler();
   srp.initialize();
+  const agent = getPairingAgent(host, port);
 
   // Trigger PIN display
-  await httpPost(host, port, '/pair-pin-start');
+  await httpPost(host, port, '/pair-pin-start', undefined, agent);
 
   // Send pair-setup SeqNo 1
   const tlvData = writeTlv(new Map<number, Buffer>([
@@ -58,7 +122,7 @@ export async function startAirPlayPairing(host: string, port: number): Promise<A
     [TlvValue.SeqNo, Buffer.from([0x01])],
   ]));
 
-  const resp = await httpPost(host, port, '/pair-setup', tlvData);
+  const resp = await httpPost(host, port, '/pair-setup', tlvData, agent);
   const pairingData = readTlv(resp);
 
   const atvSalt = pairingData.get(TlvValue.Salt);
@@ -81,13 +145,14 @@ export async function finishAirPlayPairing(
   displayName?: string,
 ): Promise<HapCredentials> {
   const { srp, host, port, atvSalt, atvPubKey } = session;
+  const agent = getPairingAgent(host, port);
 
   console.log('[DEBUG] ATV Salt:', atvSalt.toString('hex'));
   console.log('[DEBUG] ATV PubKey length:', atvPubKey.length);
   console.log('[DEBUG] PIN:', pin);
 
   // SRP step 1: set PIN
-  srp.step1(parseInt(pin, 10));
+  srp.step1(pin.trim());
 
   // SRP step 2: compute proof
   const [pubKey, proof] = srp.step2(atvPubKey, atvSalt);
@@ -100,7 +165,7 @@ export async function finishAirPlayPairing(
     [TlvValue.PublicKey, pubKey],
     [TlvValue.Proof, proof],
   ]));
-  const seq3Resp = await httpPost(host, port, '/pair-setup', seq3Data);
+  const seq3Resp = await httpPost(host, port, '/pair-setup', seq3Data, agent);
 
   // Check for errors in SeqNo 3 response (wrong PIN, etc.)
   const seq3Tlv = readTlv(seq3Resp);
@@ -129,7 +194,7 @@ export async function finishAirPlayPairing(
     [TlvValue.SeqNo, Buffer.from([0x05])],
     [TlvValue.EncryptedData, encrypted],
   ]));
-  const resp = await httpPost(host, port, '/pair-setup', seq5Data);
+  const resp = await httpPost(host, port, '/pair-setup', seq5Data, agent);
   const pairingData = readTlv(resp);
 
   const encryptedResponse = pairingData.get(TlvValue.EncryptedData);

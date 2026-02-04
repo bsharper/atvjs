@@ -58,9 +58,11 @@ export class CompanionConnection {
   }
 
   async connect(): Promise<void> {
+    if (this.connected) return;
     return new Promise((resolve, reject) => {
       this.socket = net.createConnection({ host: this.host, port: this.port }, () => {
         this.connected = true;
+        this.socket?.unref();
         resolve();
       });
 
@@ -147,5 +149,13 @@ export class CompanionConnection {
 
   get isConnected(): boolean {
     return this.connected;
+  }
+
+  getHost(): string {
+    return this.host;
+  }
+
+  getPort(): number {
+    return this.port;
   }
 }

@@ -30,7 +30,7 @@ export class SRPAuthHandler {
   private srpClient: SrpClient | null = null;
   private shared: Buffer | null = null;
   private sessionKey: Buffer | null = null;
-  private pin: number = 0;
+  private pin: string = '';
   private clientSecret: Buffer | null = null;
 
   constructor() {
@@ -146,7 +146,7 @@ export class SRPAuthHandler {
   /**
    * Pair-Setup step 1: store PIN for later use with salt.
    */
-  step1(pin: number): void {
+  step1(pin: string): void {
     this.pin = pin;
   }
 
@@ -162,7 +162,7 @@ export class SRPAuthHandler {
       params,
       atvSalt,
       Buffer.from('Pair-Setup', 'utf-8'),
-      Buffer.from(String(this.pin), 'utf-8'),
+      Buffer.from(this.pin, 'utf-8'),
       this.clientSecret!,
     );
     this.srpClient.setB(atvPubKey);

@@ -27,7 +27,22 @@ interface DiscoveredService {
   properties: Record<string, string>;
 }
 
-export async function scan(timeout = 5000): Promise<AppleTVDevice[]> {
+const APPLE_TV_MODELS = new Set([
+  'J33AP',
+  'J33DAP',
+  'J42dAP',
+  'J105aAP',
+  'J305AP',
+  'J255AP',
+]);
+
+function isAppleTvModel(model: string): boolean {
+  if (!model) return false;
+  if (model.startsWith('J')) return true;
+  return APPLE_TV_MODELS.has(model);
+}
+
+export async function scan(timeout = 5000, onlyAppleTV = true): Promise<AppleTVDevice[]> {
   return new Promise((resolve) => {
     const browser = mdns();
     const companionServices = new Map<string, DiscoveredService>();
@@ -163,6 +178,8 @@ export async function scan(timeout = 5000): Promise<AppleTVDevice[]> {
 
         // Model comes from _device-info._tcp.local service, not companion/airplay
         const model = deviceInfoModels.get(name) || allProps['model'] || allProps['rpmd'] || '';
+
+        if (onlyAppleTV && !isAppleTvModel(model)) continue;
 
         devices.push({
           name,

@@ -12,6 +12,10 @@ import { AppleTVDevice } from './mdns';
 import { CompanionConnection } from './companion/connection';
 import { CompanionProtocol } from './companion/protocol';
 import { CompanionPairSetupProcedure } from './companion/auth';
+import {
+  getCompanionPairingConnection,
+  releaseCompanionPairingConnection,
+} from './companion/pairing_keepalive';
 import { SRPAuthHandler } from './pairing/srp';
 import { HapCredentials, Credentials, serializeCredentials, parseCredentials } from './pairing/credentials';
 import {
@@ -71,7 +75,7 @@ export async function finishAirPlayPairing(
  * This triggers a second PIN display on the Apple TV.
  */
 export async function startCompanionPairing(device: AppleTVDevice): Promise<PairingSession> {
-  const connection = new CompanionConnection(device.address, device.port);
+  const connection = getCompanionPairingConnection(device.address, device.port);
   const protocol = new CompanionProtocol(connection, null);
   connection.setListener(protocol);
   const srp = new SRPAuthHandler();
@@ -98,10 +102,12 @@ export async function finishCompanionPairing(
   if (session._type !== 'companion' || !session._companionProcedure) {
     throw new Error('Not a Companion pairing session');
   }
-  const creds = await session._companionProcedure.finishPairing(parseInt(pin, 10), displayName);
+  const creds = await session._companionProcedure.finishPairing(pin.trim(), displayName);
 
-  // Close the pairing connection
-  session._companionProtocol?.close();
+  // Release the pairing connection back to the keep-alive cache
+  if (session._companionProtocol) {
+    releaseCompanionPairingConnection(session._companionProtocol.connection);
+  }
 
   return creds;
 }

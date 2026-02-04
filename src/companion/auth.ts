@@ -59,7 +59,7 @@ export class CompanionPairSetupProcedure {
     this.atvPubKey = pairingData.get(TlvValue.PublicKey)!;
   }
 
-  async finishPairing(pin: number, displayName?: string): Promise<HapCredentials> {
+  async finishPairing(pin: string, displayName?: string): Promise<HapCredentials> {
     this.srp.step1(pin);
 
     const [pubKey, proof] = this.srp.step2(this.atvPubKey!, this.atvSalt!);
