@@ -1,0 +1,13 @@
+dist
+*.py
+*.log
+fls.txt
+.venv
+node_modules
+env
+venv
+examples/device.json
+test*.js
+test*.ts
+current.md
+*.zip
