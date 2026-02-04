@@ -62,7 +62,7 @@ export class CompanionConnection {
     return new Promise((resolve, reject) => {
       this.socket = net.createConnection({ host: this.host, port: this.port }, () => {
         this.connected = true;
-        this.socket?.unref();
+        if (this.socket && typeof this.socket.unref === 'function') this.socket.unref();
         resolve();
       });
 

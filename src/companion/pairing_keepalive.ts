@@ -23,7 +23,7 @@ function scheduleCleanup(key: string, entry: Entry): void {
       connectionCache.delete(key);
     }
   }, COMPANION_AGENT_IDLE_MS);
-  entry.timer.unref();
+  if (typeof entry.timer.unref === 'function') entry.timer.unref();
 }
 
 export function getCompanionPairingConnection(host: string, port: number): CompanionConnection {
@@ -47,7 +47,7 @@ export function getCompanionPairingConnection(host: string, port: number): Compa
       connectionCache.delete(key);
     }, COMPANION_AGENT_IDLE_MS),
   };
-  entry.timer.unref();
+  if (typeof entry.timer.unref === 'function') entry.timer.unref();
   connectionCache.set(key, entry);
   return connection;
 }
@@ -66,7 +66,7 @@ export function releaseCompanionPairingConnection(connection: CompanionConnectio
         connectionCache.delete(key);
       }, COMPANION_AGENT_IDLE_MS),
     };
-    entry.timer.unref();
+    if (typeof entry.timer.unref === 'function') entry.timer.unref();
     connectionCache.set(key, entry);
   }
 

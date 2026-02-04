@@ -1,6 +1,6 @@
 {
   "name": "atv-js",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Apple TV control library - mDNS discovery, AirPlay/Companion pairing, remote control, keyboard input",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

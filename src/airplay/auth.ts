@@ -76,7 +76,7 @@ function touchAgent(entry: AgentEntry): void {
       }
     }
   }, AIRPLAY_AGENT_IDLE_MS);
-  entry.timer.unref();
+  if (typeof entry.timer.unref === 'function') entry.timer.unref();
 }
 
 function getPairingAgent(host: string, port: number): http.Agent {
@@ -99,7 +99,7 @@ function getPairingAgent(host: string, port: number): http.Agent {
       agentCache.delete(key);
     }, AIRPLAY_AGENT_IDLE_MS),
   };
-  entry.timer.unref();
+  if (typeof entry.timer.unref === 'function') entry.timer.unref();
   agentCache.set(key, entry);
   return agent;
 }
