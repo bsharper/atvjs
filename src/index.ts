@@ -8,7 +8,7 @@ export { HapCredentials, Credentials, parseCredentials, serializeCredentials } f
 export { RemoteKey, HidCommand, MediaControlCommand } from './companion/remote';
 export { KeyboardFocusState } from './companion/keyboard';
 
-import { AppleTVDevice } from './mdns';
+import { AppleTVDevice, scan as scanDevices } from './mdns';
 import { CompanionConnection } from './companion/connection';
 import { CompanionProtocol } from './companion/protocol';
 import { CompanionPairSetupProcedure } from './companion/auth';
@@ -122,6 +122,41 @@ export interface AppleTVConnection {
   _keyboardFocusState: KeyboardFocusState;
 }
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function matchesDevice(target: AppleTVDevice, candidate: AppleTVDevice): boolean {
+  if (target.identifier && candidate.identifier === target.identifier) return true;
+  if (candidate.address === target.address) return true;
+  return candidate.name === target.name;
+}
+
+function mergeDiscoveredDevice(target: AppleTVDevice, discovered: AppleTVDevice): AppleTVDevice {
+  return {
+    ...target,
+    ...discovered,
+    properties: { ...target.properties, ...discovered.properties },
+  };
+}
+
+async function connectCompanion(
+  device: AppleTVDevice,
+  companionCredentials: string,
+): Promise<CompanionProtocol> {
+  const connection = new CompanionConnection(device.address, device.port);
+  const protocol = new CompanionProtocol(connection, companionCredentials);
+  connection.setListener(protocol);
+  await protocol.start();
+  return protocol;
+}
+
+async function discoverLatestDevice(device: AppleTVDevice): Promise<AppleTVDevice | null> {
+  const discovered = await scanDevices(3000, false);
+  return discovered.find((candidate) => matchesDevice(device, candidate)) || null;
+}
+
 /**
  * Connect to an Apple TV using stored credentials.
  * Performs pair-verify and sets up encrypted Companion channel.
@@ -130,12 +165,34 @@ export async function connect(
   device: AppleTVDevice,
   credentials: Credentials,
 ): Promise<AppleTVConnection> {
-  const connection = new CompanionConnection(device.address, device.port);
-  const protocol = new CompanionProtocol(connection, credentials.companion);
-  connection.setListener(protocol);
+  let activeDevice = device;
+  let protocol: CompanionProtocol;
 
-  // Connect, verify credentials, enable encryption
-  await protocol.start();
+  try {
+    protocol = await connectCompanion(activeDevice, credentials.companion);
+  } catch (initialError) {
+    let discovered: AppleTVDevice | null = null;
+    try {
+      discovered = await discoverLatestDevice(activeDevice);
+    } catch {
+      discovered = null;
+    }
+
+    if (!discovered || discovered.port === activeDevice.port) {
+      throw initialError;
+    }
+
+    activeDevice = mergeDiscoveredDevice(activeDevice, discovered);
+
+    try {
+      protocol = await connectCompanion(activeDevice, credentials.companion);
+    } catch (retryError) {
+      throw new Error(
+        `Companion connection failed on saved port ${device.port} and discovered port ${activeDevice.port}: ${errorMessage(retryError)}`,
+        { cause: initialError instanceof Error ? initialError : undefined },
+      );
+    }
+  }
 
   // Post-connection initialization (order matters!)
   // 1. Send system info
@@ -177,7 +234,7 @@ export async function connect(
 
   const conn: AppleTVConnection = {
     protocol,
-    device,
+    device: activeDevice,
     credentials,
     _keyboardFocusState: KeyboardFocusState.Unknown,
   };
