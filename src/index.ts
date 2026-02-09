@@ -118,8 +118,24 @@ export interface AppleTVConnection {
   protocol: CompanionProtocol;
   device: AppleTVDevice;
   credentials: Credentials;
+  /** Credentials + endpoint used for this connection attempt/result. */
+  usedCredentials: ConnectionCredentialsSnapshot;
+  /** True when usedCredentials exactly match the values passed to connect(...). */
+  usedCredentialsMatchProvided: boolean;
   /** @internal */
   _keyboardFocusState: KeyboardFocusState;
+}
+
+export interface ConnectionCredentialsSnapshot {
+  airplay: string;
+  companion: string;
+  device: {
+    name: string;
+    address: string;
+    port: number;
+    airplayPort: number;
+    identifier: string;
+  };
 }
 
 function errorMessage(error: unknown): string {
@@ -127,10 +143,43 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
-function matchesDevice(target: AppleTVDevice, candidate: AppleTVDevice): boolean {
-  if (target.identifier && candidate.identifier === target.identifier) return true;
-  if (candidate.address === target.address) return true;
-  return candidate.name === target.name;
+const ID_PROPERTY_KEYS = new Set(['rpmrtid', 'deviceid', 'macaddress']);
+
+function normalizeIdentifier(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function getIdentifiers(device: AppleTVDevice): Set<string> {
+  const identifiers = new Set<string>();
+
+  if (device.identifier) {
+    identifiers.add(normalizeIdentifier(device.identifier));
+  }
+
+  for (const [key, value] of Object.entries(device.properties || {})) {
+    if (!value || !ID_PROPERTY_KEYS.has(key.toLowerCase())) continue;
+    identifiers.add(normalizeIdentifier(value));
+  }
+
+  return identifiers;
+}
+
+function sharesIdentifier(target: AppleTVDevice, candidate: AppleTVDevice): boolean {
+  const targetIds = getIdentifiers(target);
+  if (targetIds.size === 0) return false;
+
+  for (const identifier of getIdentifiers(candidate)) {
+    if (targetIds.has(identifier)) return true;
+  }
+
+  return false;
+}
+
+function deviceMatchScore(target: AppleTVDevice, candidate: AppleTVDevice): number {
+  if (sharesIdentifier(target, candidate)) return 100;
+  if (candidate.address === target.address) return 10;
+  if (candidate.name === target.name) return 1;
+  return 0;
 }
 
 function mergeDiscoveredDevice(target: AppleTVDevice, discovered: AppleTVDevice): AppleTVDevice {
@@ -139,6 +188,40 @@ function mergeDiscoveredDevice(target: AppleTVDevice, discovered: AppleTVDevice)
     ...discovered,
     properties: { ...target.properties, ...discovered.properties },
   };
+}
+
+function hasCompanionEndpointChanged(current: AppleTVDevice, discovered: AppleTVDevice): boolean {
+  return current.address !== discovered.address || current.port !== discovered.port;
+}
+
+function toCredentialSnapshot(
+  device: AppleTVDevice,
+  credentials: Credentials,
+): ConnectionCredentialsSnapshot {
+  return {
+    airplay: credentials.airplay,
+    companion: credentials.companion,
+    device: {
+      name: device.name,
+      address: device.address,
+      port: device.port,
+      airplayPort: device.airplayPort,
+      identifier: device.identifier,
+    },
+  };
+}
+
+function snapshotsEqual(
+  left: ConnectionCredentialsSnapshot,
+  right: ConnectionCredentialsSnapshot,
+): boolean {
+  return left.airplay === right.airplay
+    && left.companion === right.companion
+    && left.device.name === right.device.name
+    && left.device.address === right.device.address
+    && left.device.port === right.device.port
+    && left.device.airplayPort === right.device.airplayPort
+    && left.device.identifier === right.device.identifier;
 }
 
 async function connectCompanion(
@@ -154,7 +237,29 @@ async function connectCompanion(
 
 async function discoverLatestDevice(device: AppleTVDevice): Promise<AppleTVDevice | null> {
   const discovered = await scanDevices(3000, false);
-  return discovered.find((candidate) => matchesDevice(device, candidate)) || null;
+  let bestMatch: AppleTVDevice | null = null;
+  let bestScore = 0;
+
+  for (const candidate of discovered) {
+    const score = deviceMatchScore(device, candidate);
+    if (score === 0) continue;
+
+    if (!bestMatch || score > bestScore) {
+      bestMatch = candidate;
+      bestScore = score;
+      continue;
+    }
+
+    if (score === bestScore) {
+      const candidatePortMatches = candidate.port === device.port;
+      const currentPortMatches = bestMatch.port === device.port;
+      if (candidatePortMatches && !currentPortMatches) {
+        bestMatch = candidate;
+      }
+    }
+  }
+
+  return bestMatch;
 }
 
 /**
@@ -166,6 +271,7 @@ export async function connect(
   credentials: Credentials,
 ): Promise<AppleTVConnection> {
   let activeDevice = device;
+  const providedCredentials = toCredentialSnapshot(device, credentials);
   let protocol: CompanionProtocol;
 
   try {
@@ -178,17 +284,22 @@ export async function connect(
       discovered = null;
     }
 
-    if (!discovered || discovered.port === activeDevice.port) {
+    if (!discovered) {
       throw initialError;
     }
 
-    activeDevice = mergeDiscoveredDevice(activeDevice, discovered);
+    const mergedDevice = mergeDiscoveredDevice(activeDevice, discovered);
+    if (!hasCompanionEndpointChanged(activeDevice, mergedDevice)) {
+      throw initialError;
+    }
+
+    activeDevice = mergedDevice;
 
     try {
       protocol = await connectCompanion(activeDevice, credentials.companion);
     } catch (retryError) {
       throw new Error(
-        `Companion connection failed on saved port ${device.port} and discovered port ${activeDevice.port}: ${errorMessage(retryError)}`,
+        `Companion connection failed on saved endpoint ${device.address}:${device.port} and discovered endpoint ${activeDevice.address}:${activeDevice.port}: ${errorMessage(retryError)}`,
         { cause: initialError instanceof Error ? initialError : undefined },
       );
     }
@@ -236,8 +347,11 @@ export async function connect(
     protocol,
     device: activeDevice,
     credentials,
+    usedCredentials: toCredentialSnapshot(activeDevice, credentials),
+    usedCredentialsMatchProvided: false,
     _keyboardFocusState: KeyboardFocusState.Unknown,
   };
+  conn.usedCredentialsMatchProvided = snapshotsEqual(conn.usedCredentials, providedCredentials);
 
   // Watch keyboard focus state
   _watchKeyboardFocus(protocol, (state) => {

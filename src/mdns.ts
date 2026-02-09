@@ -42,6 +42,14 @@ function isAppleTvModel(model: string): boolean {
   return APPLE_TV_MODELS.has(model);
 }
 
+function getPropertyIgnoreCase(properties: Record<string, string>, key: string): string | undefined {
+  const expected = key.toLowerCase();
+  for (const [property, value] of Object.entries(properties)) {
+    if (property.toLowerCase() === expected) return value;
+  }
+  return undefined;
+}
+
 export async function scan(timeout = 5000, onlyAppleTV = true): Promise<AppleTVDevice[]> {
   return new Promise((resolve) => {
     const browser = mdns();
@@ -177,16 +185,24 @@ export async function scan(timeout = 5000, onlyAppleTV = true): Promise<AppleTVD
         const allProps = { ...companion.properties, ...airplay?.properties };
 
         // Model comes from _device-info._tcp.local service, not companion/airplay
-        const model = deviceInfoModels.get(name) || allProps['model'] || allProps['rpmd'] || '';
+        const model = deviceInfoModels.get(name)
+          || getPropertyIgnoreCase(allProps, 'model')
+          || getPropertyIgnoreCase(allProps, 'rpmd')
+          || '';
 
         if (onlyAppleTV && !isAppleTvModel(model)) continue;
+
+        const identifier = getPropertyIgnoreCase(allProps, 'rpmrtid')
+          || getPropertyIgnoreCase(allProps, 'deviceid')
+          || getPropertyIgnoreCase(allProps, 'macaddress')
+          || name;
 
         devices.push({
           name,
           address,
           port: companion.port,
           airplayPort: airplay?.port || 7000,
-          identifier: allProps['deviceid'] || allProps['MACAddress'] || name,
+          identifier,
           model,
           properties: allProps,
         });
