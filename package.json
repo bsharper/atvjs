@@ -23,7 +23,7 @@
   },
   "devDependencies": {
     "@types/multicast-dns": "^7.2.4",
-    "@types/node": "^20.0.0",
+    "@types/node": "^20.19.33",
     "ts-node": "^10.9.0",
     "typescript": "^5.3.0"
   },
