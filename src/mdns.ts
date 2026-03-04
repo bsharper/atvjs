@@ -4,6 +4,27 @@
  */
 
 import mdns from 'multicast-dns';
+import * as os from 'os';
+
+/**
+ * Returns local IPv4 interface addresses suitable for mDNS multicast binding.
+ * On Windows, multicast must be joined on a specific interface address rather
+ * than 0.0.0.0, so we enumerate all non-internal IPv4 addresses.
+ * Falls back to ['0.0.0.0'] (works fine on macOS/Linux) if none are found.
+ */
+function getLocalInterfaces(): string[] {
+  const interfaces = os.networkInterfaces();
+  const addresses: string[] = [];
+  for (const iface of Object.values(interfaces)) {
+    if (!iface) continue;
+    for (const addr of iface) {
+      if (addr.family === 'IPv4' && !addr.internal) {
+        addresses.push(addr.address);
+      }
+    }
+  }
+  return addresses.length > 0 ? addresses : ['0.0.0.0'];
+}
 
 export interface AppleTVDevice {
   name: string;
@@ -52,13 +73,18 @@ function getPropertyIgnoreCase(properties: Record<string, string>, key: string):
 
 export async function scan(timeout = 5000, onlyAppleTV = true): Promise<AppleTVDevice[]> {
   return new Promise((resolve) => {
-    const browser = mdns();
+    // Create one browser per local interface so that on Windows the multicast
+    // group is joined on each interface explicitly (binding to 0.0.0.0 is
+    // sufficient on macOS/Linux but silently fails on Windows).
+    const localInterfaces = getLocalInterfaces();
+    const browsers = localInterfaces.map((iface) => mdns({ interface: iface }));
+
     const companionServices = new Map<string, DiscoveredService>();
     const airplayServices = new Map<string, DiscoveredService>();
     const deviceInfoModels = new Map<string, string>(); // device name → model from _device-info
     const addressMap = new Map<string, string>();
 
-    browser.on('response', (response: any) => {
+    const handleResponse = (response: any) => {
       // Collect A/AAAA records for hostname→IP resolution
       for (const answer of [...(response.answers || []), ...(response.additionals || [])]) {
         if (answer.type === 'A') {
@@ -137,15 +163,22 @@ export async function scan(timeout = 5000, onlyAppleTV = true): Promise<AppleTVD
           }
         }
       }
-    });
+    };
+
+    // Attach the shared response handler to every per-interface browser
+    for (const browser of browsers) {
+      browser.on('response', handleResponse);
+    }
 
     // Send queries for companion, airplay, and device-info services
     const queryServices = () => {
-      browser.query([
-        { name: '_companion-link._tcp.local', type: 'PTR' },
-        { name: '_airplay._tcp.local', type: 'PTR' },
-        { name: '_device-info._tcp.local', type: 'PTR' },
-      ]);
+      for (const browser of browsers) {
+        browser.query([
+          { name: '_companion-link._tcp.local', type: 'PTR' },
+          { name: '_airplay._tcp.local', type: 'PTR' },
+          { name: '_device-info._tcp.local', type: 'PTR' },
+        ]);
+      }
     };
 
     // Send initial query
@@ -155,7 +188,7 @@ export async function scan(timeout = 5000, onlyAppleTV = true): Promise<AppleTVD
     setTimeout(queryServices, timeout / 2);
 
     setTimeout(() => {
-      browser.destroy();
+      for (const browser of browsers) browser.destroy();
 
       // Merge companion and airplay services by device name
       const devices: AppleTVDevice[] = [];
