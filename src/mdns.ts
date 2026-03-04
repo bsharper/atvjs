@@ -7,12 +7,16 @@ import mdns from 'multicast-dns';
 import * as os from 'os';
 
 /**
- * Returns local IPv4 interface addresses suitable for mDNS multicast binding.
+ * Returns the list of mdns constructor option objects to use for scanning.
  * On Windows, multicast must be joined on a specific interface address rather
- * than 0.0.0.0, so we enumerate all non-internal IPv4 addresses.
- * Falls back to ['0.0.0.0'] (works fine on macOS/Linux) if none are found.
+ * than 0.0.0.0, so we create one entry per non-internal IPv4 address.
+ * On macOS/Linux the default (no interface option) works correctly, so we
+ * return a single entry with no options.
  */
-function getLocalInterfaces(): string[] {
+function getMdnsOptions(): Array<object | undefined> {
+  if (process.platform !== 'win32') {
+    return [undefined];
+  }
   const interfaces = os.networkInterfaces();
   const addresses: string[] = [];
   for (const iface of Object.values(interfaces)) {
@@ -23,7 +27,8 @@ function getLocalInterfaces(): string[] {
       }
     }
   }
-  return addresses.length > 0 ? addresses : ['0.0.0.0'];
+  if (addresses.length === 0) return [undefined];
+  return addresses.map((iface) => ({ interface: iface }));
 }
 
 export interface AppleTVDevice {
@@ -73,11 +78,10 @@ function getPropertyIgnoreCase(properties: Record<string, string>, key: string):
 
 export async function scan(timeout = 5000, onlyAppleTV = true): Promise<AppleTVDevice[]> {
   return new Promise((resolve) => {
-    // Create one browser per local interface so that on Windows the multicast
-    // group is joined on each interface explicitly (binding to 0.0.0.0 is
-    // sufficient on macOS/Linux but silently fails on Windows).
-    const localInterfaces = getLocalInterfaces();
-    const browsers = localInterfaces.map((iface) => mdns({ interface: iface }));
+    // On macOS/Linux a single mdns() with no options works correctly.
+    // On Windows we need one instance per interface so the multicast group is
+    // joined explicitly on each adapter (0.0.0.0 binding is silently ignored).
+    const browsers = getMdnsOptions().map((opts) => opts ? mdns(opts) : mdns());
 
     const companionServices = new Map<string, DiscoveredService>();
     const airplayServices = new Map<string, DiscoveredService>();
