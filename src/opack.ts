@@ -34,7 +34,11 @@ function _pack(data: unknown, objectList: Uint8Array[]): Uint8Array {
     buf.writeDoubleLE(data.value, 1);
     packed = buf;
   } else if (typeof data === 'number') {
-    if (Number.isInteger(data)) {
+    // Negative integers can't use the unsigned int encodings (packInteger
+    // would throw in writeBigUInt64LE) — encode them as float64, which
+    // devices accept anywhere a number is expected (pyatv sends these
+    // fields, e.g. MediaControl _skpS, as floats).
+    if (Number.isInteger(data) && data >= 0) {
       packed = packInteger(data);
     } else {
       // float64
