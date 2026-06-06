@@ -23,7 +23,7 @@ import {
   startAirPlayPairing as _startAirPlayPairing,
   finishAirPlayPairing as _finishAirPlayPairing,
 } from './airplay/auth';
-import { sendKeyPress, sendKeyDown, sendKeyUp, RemoteKey } from './companion/remote';
+import { sendKeyPress, sendKeyDown, sendKeyUp, RemoteKey, HidCommand } from './companion/remote';
 import {
   getText as _getText,
   setText as _setText,
@@ -416,4 +416,50 @@ export function disconnect(conn: AppleTVConnection): void {
  */
 export function isConnected(conn: AppleTVConnection): boolean {
   return conn.protocol.connection.isConnected;
+}
+
+// ---- Apps & Power (ported from pyatv's Companion implementation) ----
+
+/**
+ * Launch an app by bundle identifier (e.g. "com.netflix.Netflix") or
+ * deep-link a URL/scheme (e.g. "https://tv.apple.com/..." or "youtube://...").
+ */
+export async function launchApp(conn: AppleTVConnection, bundleIdOrUrl: string): Promise<void> {
+  const key = bundleIdOrUrl.includes('://') ? '_urlS' : '_bundleID';
+  await conn.protocol.sendCommand('_launchApp', { [key]: bundleIdOrUrl });
+}
+
+/**
+ * List the apps installed on the device as a map of bundle id → display name.
+ */
+export async function listApps(conn: AppleTVConnection): Promise<Record<string, string>> {
+  const response = await conn.protocol.sendCommand('FetchLaunchableApplicationsEvent', {});
+  return (response._c ?? {}) as Record<string, string>;
+}
+
+async function pressHidCommand(conn: AppleTVConnection, command: HidCommand): Promise<void> {
+  await conn.protocol.sendCommand('_hidC', { _hBtS: 1, _hidC: command });
+  await conn.protocol.sendCommand('_hidC', { _hBtS: 2, _hidC: command });
+}
+
+/**
+ * Put the device to sleep.
+ */
+export async function sleep(conn: AppleTVConnection): Promise<void> {
+  await pressHidCommand(conn, HidCommand.Sleep);
+}
+
+/**
+ * Wake the device up.
+ */
+export async function wake(conn: AppleTVConnection): Promise<void> {
+  await pressHidCommand(conn, HidCommand.Wake);
+}
+
+/**
+ * Open Control Center. Note: over the protocol this is a single HID
+ * PageDown (19) event, not a Home hold — matching pyatv's control_center().
+ */
+export async function controlCenter(conn: AppleTVConnection): Promise<void> {
+  await pressHidCommand(conn, HidCommand.PageDown);
 }
